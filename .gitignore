@@ -1,0 +1,22 @@
+# 忽略所有權重檔
+*.pth
+*.pt
+
+# 忽略資料集資料夾 (不管它在哪層目錄)
+data/
+dataset/
+
+# 忽略模型存檔資料夾
+checkpoints/
+
+# 忽略 Python 自動產生的暫存檔
+__pycache__/
+*.pyc
+
+# 忽略 VS Code 的設定檔
+.vscode/
+
+*.zip
+*.tar
+
+*.csv
