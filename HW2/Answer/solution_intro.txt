@@ -1,0 +1,12 @@
+solution 0: 完全試跑，分數是0 沒學成功
+solution_2: 使用 Deformable DETR, epoch = 20, 分數 0.18, 使用 NMS threshold = 0.47
+solution_3: 同 solution_2, 但是把 NMS 設到 0.01 得到答案 分數: 0.20
+solution_4,5: trash
+solution_6: 跑到 epoch = 40 中的 max score, threshold = 0.01
+
+4/20:
+先把 deformable detr 做個小結
+看原本code + 寫報告
+整理 function 用法
+transformer 筆記、CNN 筆記
+殺時間音樂、報告
