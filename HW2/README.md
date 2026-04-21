@@ -65,4 +65,4 @@ After the training is complete, the model weights will be saved in the `./checkp
 python test_add_NMS.py --checkpoint [your_path] --threshold 
 ``` 
 ## Performance Snapshot
-![picture](./Snapshot.png)
+![picture](./snapshot.png)
