@@ -111,22 +111,16 @@ def collate_fn(batch):
     }
 
 
-# ─────────────────────────────────────────────
-# Model builder
-# ─────────────────────────────────────────────
+
 def build_model(device):
-    """Build Deformable-DETR and optionally load a checkpoint."""
-    # FIX 4: Initialise FROM a pretrained Deformable-DETR checkpoint so the
-    # backbone AND transformer weights are already good.  Only the final
-    # classification head (num_labels) is re-initialised.
     config = DeformableDetrConfig(
         backbone="resnet50",
         use_pretrained_backbone=True,
         num_labels=NUM_CLASSES,
-        ignore_mismatched_sizes=True,   # head size changes → ok to ignore
-        encoder_layers=2,       # from 4
-        decoder_layers=4,       # from 4
-        num_queries=100,        # from 300
+        ignore_mismatched_sizes=True,  
+        encoder_layers=2,       
+        decoder_layers=4,       
+        num_queries=100,        
         auxiliary_loss=True,
     )
     model = DeformableDetrForObjectDetection(config=config)
@@ -134,15 +128,8 @@ def build_model(device):
     return model
 
 
-# ─────────────────────────────────────────────
-# Differential learning-rate optimizer
-# ─────────────────────────────────────────────
 def build_optimizer(model):
-    """
-    FIX 5: Use differential LR.
-    Backbone (pretrained ResNet-50) → very small LR.
-    Transformer encoder/decoder → normal LR.
-    """
+
     backbone_params = [
         p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad
     ]
@@ -156,9 +143,6 @@ def build_optimizer(model):
     return AdamW(param_groups, weight_decay=CONFIG["weight_decay"])
 
 
-# ─────────────────────────────────────────────
-# Training loop
-# ─────────────────────────────────────────────
 def train_one_epoch(model, loader, optimizer, scaler,scheduler, device, epoch):
     model.train()
     total_loss = 0.0
@@ -180,18 +164,14 @@ def train_one_epoch(model, loader, optimizer, scaler,scheduler, device, epoch):
 
         scaler.scale(loss).backward()
         if (i + 1) % accumulation_steps == 0 or (i + 1) == len(loader):
-            # Unscale 梯度，準備做 gradient clipping
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
-            # 更新參數
             scaler.step(optimizer)
             scaler.update()
-            
-            # 更新 Learning Rate
+
             scheduler.step()
             
-            # 清空梯度，準備下一輪的累積
             optimizer.zero_grad()
 
         total_loss += (loss.item() * accumulation_steps)
@@ -219,9 +199,6 @@ def validate(model, loader, device, epoch):
     return total_loss / len(loader)
 
 
-# ─────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Using device: {device}")
@@ -231,11 +208,8 @@ def main():
     model = build_model(device)
     optimizer = build_optimizer(model)
 
-    # FIX 7: Add LR scheduler – cosine annealing works well for DETR
-
     csv_file_path = os.path.join(CONFIG["checkpoint_dir"], "training_log.csv")
     
-    # 2. 判斷是否為接續訓練，如果不是，就建立新檔案並寫入標題列 (Header)
     is_resuming = bool(CONFIG["resume_checkpoint"]) and os.path.exists(CONFIG["resume_checkpoint"])
     file_mode = 'a' if is_resuming else 'w'
     with open(csv_file_path, mode=file_mode, newline='') as f:
@@ -267,7 +241,7 @@ def main():
     )
 
     num_training_steps = len(train_loader) * CONFIG["epochs"]
-    num_warmup_steps = 500  # 前 500 個 Batch 慢慢增加學習率
+    num_warmup_steps = 500 
 
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -275,10 +249,8 @@ def main():
         num_training_steps=num_training_steps
     )
     
-    # --- 處理接續訓練的 Scheduler 快進 ---
     if is_resuming:
         print(" accelerating scheduler...")
-        # 注意：因為現在是算 Step (Batch) 而不是 Epoch，所以要乘以 len(train_loader)
         for _ in range(CONFIG["resume_epoch"] * len(train_loader)):
             scheduler.step()
     
@@ -291,8 +263,7 @@ def main():
     if resume_path and os.path.exists(resume_path):
         print(f"[INFO] Resuming everything from {resume_path}")
         checkpoint = torch.load(resume_path, map_location=device)
-        
-        # 載入所有狀態
+
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -301,14 +272,9 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         best_val_loss = checkpoint.get('best_val_loss', float("inf"))
         
-        # 不需要再跑迴圈 fast-forward scheduler 了，狀態已經完美還原！
         print(f"[INFO] Resumed successfully from epoch {checkpoint['epoch']}.")
     else:
         start_epoch = CONFIG["resume_epoch"] + 1 if CONFIG["resume_epoch"] > 0 else 1
-
-
-
-
 
     for epoch in range(start_epoch, CONFIG["epochs"] + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, scaler,scheduler, device, epoch)

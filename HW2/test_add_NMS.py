@@ -37,12 +37,12 @@ def build_model(checkpoint_path: str, device: torch.device):
     """Load trained Deformable-DETR model from checkpoint."""
     config = DeformableDetrConfig(
         backbone="resnet50",
-        use_pretrained_backbone=False, # 推論不需下載權重
+        use_pretrained_backbone=False, 
         num_labels=NUM_CLASSES,
         ignore_mismatched_sizes=True,
-        encoder_layers=6,
-        decoder_layers=6,
-        num_queries=300,
+        encoder_layers=2,
+        decoder_layers=4,
+        num_queries=100,
     )
     model = DeformableDetrForObjectDetection(config)
 
@@ -81,12 +81,6 @@ def get_image_ids_from_folder(img_dir: str):
 
 @torch.no_grad()
 def run_inference(model, img_dir: str, threshold: float, device: torch.device):
-    """
-    Run inference over all images in img_dir.
-
-    Returns a list of dicts ready to be written as pred.json:
-        [{"image_id": int, "category_id": int, "bbox": [x,y,w,h], "score": float}, ...]
-    """
     image_files = get_image_ids_from_folder(img_dir)
     predictions = []
 
@@ -114,7 +108,6 @@ def run_inference(model, img_dir: str, threshold: float, device: torch.device):
         boxes  = results["boxes"].cpu()   # [x1, y1, x2, y2]
 
         if len(boxes) > 0:
-            # 改用 batched_nms，多傳入 labels 作為參數
             keep_idx = torchvision.ops.batched_nms(boxes, scores, labels, iou_threshold=0.5)
             scores = scores[keep_idx]
             labels = labels[keep_idx]
@@ -124,12 +117,11 @@ def run_inference(model, img_dir: str, threshold: float, device: torch.device):
         labels = labels.tolist()
         boxes  = boxes.tolist()
 
-        # 【過濾完畢後，再轉成 list 交給後面的迴圈】
         for score, label, box in zip(scores, labels, boxes):
             x1, y1, x2, y2 = box
             w = x2 - x1
             h = y2 - y1
-            # FIX: category_id in the dataset starts from 1;
+
             category_id = int(label)
             predictions.append(
                 {
