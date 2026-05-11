@@ -60,7 +60,6 @@ DICE_WEIGHT      = 0.5
 FOCAL_GAMMA      = 2.0
 
 
-# NMS_THRESHOLD: was 0.50 — too aggressive for touching cells.  Raise to 0.60.
 SCORE_THRESHOLD = 0.05       # [FIX 1] was 0.30
 NMS_THRESHOLD   = 0.60       # [FIX 2] was 0.50
 USE_TTA         = True
