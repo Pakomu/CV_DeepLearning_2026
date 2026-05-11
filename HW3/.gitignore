@@ -1,0 +1,6 @@
+train/
+test_release/
+
+*.pdf
+*.zip
+*.pth

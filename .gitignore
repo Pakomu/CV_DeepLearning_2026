@@ -6,6 +6,7 @@
 # 忽略資料集資料夾 (不管它在哪層目錄)
 data/
 dataset/
+course/
 
 # 忽略模型存檔資料夾
 checkpoints/
