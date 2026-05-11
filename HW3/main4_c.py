@@ -1,47 +1,3 @@
-#!/usr/bin/env python3
-"""
-main3_upgraded.py  –  Medical Cell Instance Segmentation  (Breakthrough Edition)
-=================================================================================
-WHY 0.30 AP50 PLATEAU DIAGNOSIS (see full analysis below):
-  ROOT CAUSE 1 — SCORE_THRESHOLD=0.30 silently amputates your recall curve.
-    AP50 is the Area-Under-the-Precision-Recall curve across ALL recall levels.
-    Discarding predictions with score in [0.05, 0.30) means you never submit
-    many true-positive cells, directly collapsing the low-confidence recall
-    portion of the curve.  This single bug often accounts for 0.03-0.06 AP.
-
-  ROOT CAUSE 2 — SGD trapped in a poor flat region.
-    Your log shows loss stuck at 1.10±0.05 from epoch 33 to 80 (47 epochs of
-    no meaningful improvement).  With 5 heterogeneous loss terms (Focal,
-    SmoothL1, BCE+Dice, cascade x2) the gradient landscape is extremely
-    complex.  SGD's uniform learning rate cannot adapt to per-parameter
-    gradient magnitudes.  AdamW with layer-wise LR + OneCycleLR's super-
-    convergence property escapes this flat region within the first 15% of
-    training (warmup phase).
-
-  ROOT CAUSE 3 — Fixed input scale fights cell-size variance.
-    min_size=256/max_size=512 means every image is seen at roughly the same
-    resolution.  Cells in this dataset vary significantly in diameter;
-    multi-scale training (randomly sampling from a list of scales each iter)
-    forces the model to learn scale-invariant features and effectively
-    multiplies dataset diversity by the number of scales.
-
-  ROOT CAUSE 4 — NMS_THRESHOLD=0.50 suppresses touching cells.
-    Adjacent cells in dense clusters can have pairwise IoU > 0.50 purely
-    from proximity.  Standard NMS at 0.50 incorrectly suppresses one of two
-    valid, touching cells.  Raising to 0.60 preserves more true positives in
-    dense scenes.
-
-FIXES APPLIED:
-  [FIX 1] SCORE_THRESHOLD: 0.30 → 0.05  (restores full recall curve)
-  [FIX 2] NMS_THRESHOLD:   0.50 → 0.60  (preserves touching/dense cells)
-  [FIX 3] AdamW + OneCycleLR replaces SGD + CosineAnnealingLR
-            • Layer-wise LR: backbone=1e-5, heads=1e-4
-            • Peak LR ramp at 15% of training (warmup), then cosine decay
-  [FIX 4] Multi-Scale Training: min_size=[256,320,384,448,512], max_size=640
-  [FIX 5] detections_per_img: 300 → 500 (more candidates in dense images)
-  [FIX 6] CSV auto-logging: every epoch writes per-component losses to CSV
-"""
-
 import os
 import csv
 import json
@@ -82,18 +38,17 @@ TEST_DIR          = './test_release'
 TEST_MAPPING_JSON = './test_image_name_to_ids.json'
 OUTPUT_SUBMISSION = './test-results.json'
 CHECKPOINT_PATH   = './best_model.pth'
-LOG_CSV           = './training_log.csv'    # [FIX 6] CSV output path
+LOG_CSV           = './training_log.csv'    
 
 NUM_CLASSES        = 5       # background + 4 cell types
 BATCH_SIZE         = 1
-ACCUMULATION_STEPS = 4       # effective batch = 4
+ACCUMULATION_STEPS = 4       
 NUM_EPOCHS         = 80
 
-# [FIX 3]  AdamW replaces SGD — use much smaller base LR
-LEARNING_RATE = 1e-4         # backbone LR = 1e-5, head LR = 1e-4
-MAX_LR        = 1e-3         # OneCycleLR peak LR for heads
+LEARNING_RATE = 1e-4         
+MAX_LR        = 1e-3         
 WEIGHT_DECAY  = 1e-4
-USE_ONECYCLE  = True         # set False to fall back to CosineAnnealingLR
+USE_ONECYCLE  = True        
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -104,19 +59,13 @@ USE_CASCADE      = True
 DICE_WEIGHT      = 0.5
 FOCAL_GAMMA      = 2.0
 
-# [FIX 1 + FIX 2]  Inference thresholds
-# SCORE_THRESHOLD: was 0.30 — silently killed recall.  AP50 is AUC over the
-#   full precision-recall curve; submitting only predictions above 0.30 collapses
-#   the low-recall portion.  Use 0.05 to let the metric see all the model knows.
+
 # NMS_THRESHOLD: was 0.50 — too aggressive for touching cells.  Raise to 0.60.
 SCORE_THRESHOLD = 0.05       # [FIX 1] was 0.30
 NMS_THRESHOLD   = 0.60       # [FIX 2] was 0.50
 USE_TTA         = True
 
 
-# =============================================================================
-# AUGMENTATIONS  (unchanged from main3.py)
-# =============================================================================
 
 _HED_FROM_RGB = np.array([[0.6500286, 0.7044268, 0.2860126],
                             [0.0704478, 0.9897211, 0.1250150],
@@ -170,9 +119,6 @@ def apply_albumentations(image_np, masks_np, transform):
     return res['image'], res['masks']
 
 
-# =============================================================================
-# DATASET  (unchanged from main3.py)
-# =============================================================================
 
 class MedicalCellDataset(Dataset):
     def __init__(self, root_dir: str, is_train: bool = True):
@@ -269,9 +215,6 @@ class MedicalCellDataset(Dataset):
         return img_tensor, target
 
 
-# =============================================================================
-# LOSS FUNCTIONS  (unchanged from main3.py)
-# =============================================================================
 
 def combined_maskrcnn_loss(
     mask_logits, proposals, gt_masks, gt_labels,
@@ -304,9 +247,6 @@ def combined_maskrcnn_loss(
     return bce + dice_weight * dice.mean()
 
 
-# =============================================================================
-# CUSTOM ROI HEADS  (unchanged from main3.py)
-# =============================================================================
 
 class CustomRoIHeads(RoIHeads):
     def __init__(self, dice_weight=0.5, focal_gamma=2.0, **kwargs):
@@ -386,7 +326,6 @@ class CascadeRoIHeads(CustomRoIHeads):
         self._casc_fg_iou     = cascade_fg_iou
 
     def forward(self, features, proposals, image_shapes, targets=None):
-        # ── Stage 1 (初步邊界框預測) ──
         if self.training:
             proposals, matched_idxs, labels, regression_targets = self.select_training_samples(proposals, targets)
         else:
@@ -416,7 +355,6 @@ class CascadeRoIHeads(CustomRoIHeads):
             for i in range(len(boxes)):
                 result.append({"boxes": boxes[i], "labels": out_lbls[i], "scores": scores[i]})
 
-        # ── Stage 2 (Cascade 精細框調整) ──
         if self.training:
             orig_hi, orig_lo = self.proposal_matcher.high_threshold, self.proposal_matcher.low_threshold
             self.proposal_matcher.high_threshold, self.proposal_matcher.low_threshold = self._casc_fg_iou, self._casc_fg_iou - 0.1
@@ -453,7 +391,6 @@ class CascadeRoIHeads(CustomRoIHeads):
                     for i, r in enumerate(result):
                         r.update({"boxes": bx2[i], "labels": lb2[i], "scores": sc2[i]})
 
-        # ── Stage 3 Mask Head (關鍵修復：現在才依據最終框產生 Mask) ──
         if self.has_mask():
             if self.training:
                 mask_props, pos_midxs = [], []
@@ -483,9 +420,7 @@ class CascadeRoIHeads(CustomRoIHeads):
         return result, losses
 
 
-# =============================================================================
-# MODEL FACTORY
-# =============================================================================
+
 
 def _build_roi_heads(
     num_classes:  int,
@@ -553,12 +488,9 @@ def get_model(num_classes: int = NUM_CLASSES) -> MaskRCNN:
         rpn_nms_thresh=0.7,
         rpn_fg_iou_thresh=0.7, rpn_bg_iou_thresh=0.3,
         rpn_batch_size_per_image=256, rpn_positive_fraction=0.5,
-        # [FIX 4] Multi-Scale Training: torchvision randomly picks one value
-        #   from this list per forward pass during training, forcing the model
-        #   to learn scale-invariant representations.
-        #   Ref: He et al., "Feature Pyramid Networks" (CVPR 2017).
-        min_size=[256, 320, 384, 448, 512],   # [FIX 4] was single int 256
-        max_size=640,                          # [FIX 4] was 512
+
+        min_size=[256, 320, 384, 448, 512],   
+        max_size=640,                         
     )
     model.roi_heads = roi_heads
 
@@ -581,9 +513,6 @@ def encode_mask_to_rle(binary_mask: np.ndarray) -> dict:
     return rle
 
 
-# =============================================================================
-# [FIX 6]  CSV AUTO-LOGGING HELPER
-# =============================================================================
 
 def _write_csv_log(
     filepath:         str,
@@ -628,9 +557,6 @@ def _write_csv_log(
         writer.writerow(row)
 
 
-# =============================================================================
-# TRAINING LOOP
-# =============================================================================
 
 def train_model(
     model:        nn.Module,
@@ -651,12 +577,11 @@ def train_model(
     scaler    = torch.amp.GradScaler('cuda')
     best_loss = float('inf')
 
-    # [FIX 6]  If file already exists (e.g. resumed run), append without header.
     write_header = not os.path.exists(LOG_CSV)
 
     for epoch in range(num_epochs):
         epoch_total_loss = 0.0
-        epoch_comp: Dict[str, float] = {}   # accumulated per-component losses
+        epoch_comp: Dict[str, float] = {}   
         n_batches = 0
 
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1:03d}/{num_epochs}")
@@ -680,9 +605,6 @@ def train_model(
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
 
-                # [FIX 3]  OneCycleLR must step once per *optimizer* update,
-                #           NOT once per epoch.  Calling it here (inside the
-                #           accumulation block) achieves exactly that.
                 if is_onecycle:
                     lr_scheduler.step()
 
@@ -695,7 +617,6 @@ def train_model(
             pbar.set_postfix({k: f"{v.item():.3f}" for k, v in loss_dict.items()})
             del images, targets, loss_dict, losses, loss
 
-        # ── End-of-epoch bookkeeping ──────────────────────────────────────
         if not is_onecycle:
             lr_scheduler.step()
 
@@ -719,7 +640,6 @@ def train_model(
             torch.save(model.state_dict(), CHECKPOINT_PATH)
             print(f"  ✓ Checkpoint saved  (avg_loss={avg_loss:.4f})")
 
-        # [FIX 6]  Append row to CSV
         _write_csv_log(
             filepath=LOG_CSV, epoch=epoch+1,
             avg_loss=avg_loss, lr=current_lr, is_best=is_best,
@@ -731,10 +651,6 @@ def train_model(
 
     return model
 
-
-# =============================================================================
-# TEST-TIME AUGMENTATION  (unchanged from main3.py)
-# =============================================================================
 
 @torch.no_grad()
 def _predict_single(model, image, device):
@@ -791,7 +707,6 @@ def predict_with_tta(model: nn.Module, image: torch.Tensor, device) -> Dict:
     """
     _, H, W = image.shape
 
-    # 預測後立刻過濾垃圾框，避免記憶體在後續 cat 時爆掉
     p_orig  = _filter_low_scores(_predict_single(model, image, device))
     p_hflip = _filter_low_scores(_hflip_pred(_predict_single(model, TF.hflip(image), device), W))
     p_vflip = _filter_low_scores(_vflip_pred(_predict_single(model, TF.vflip(image), device), H))
@@ -799,9 +714,6 @@ def predict_with_tta(model: nn.Module, image: torch.Tensor, device) -> Dict:
     return _merge_predictions([p_orig, p_hflip, p_vflip])
 
 
-# =============================================================================
-# INFERENCE & SUBMISSION
-# =============================================================================
 
 def generate_submission(model, test_dataloader, mapping_json_path, output_path,
                         use_tta=USE_TTA):
@@ -848,7 +760,7 @@ def generate_submission(model, test_dataloader, mapping_json_path, output_path,
                     "segmentation": encode_mask_to_rle(bm),
                 })
             
-            # [加入這行] 每處理完一張圖片，強制釋放 GPU 記憶體碎片
+
             torch.cuda.empty_cache()
 
     with open(output_path, 'w') as f:
@@ -856,9 +768,7 @@ def generate_submission(model, test_dataloader, mapping_json_path, output_path,
     print(f"Saved → {output_path}  ({len(submission)} predictions)")
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+
 
 def main():
     print(f"Device: {DEVICE}")
@@ -878,23 +788,7 @@ def main():
     model = get_model(NUM_CLASSES)
     model.to(DEVICE)
 
-    # ── [FIX 3]  AdamW with layer-wise learning rates ─────────────────────
-    #
-    # WHY AdamW OVER SGD:
-    #   Your 47-epoch loss plateau (1.10±0.05) is the textbook signature of
-    #   SGD stuck in a flat region of a high-dimensional loss surface.  With
-    #   5 heterogeneous loss components (Focal, SmoothL1, BCE+Dice, cascade ×2),
-    #   the gradient magnitudes differ by orders of magnitude per parameter.
-    #   AdamW maintains a per-parameter adaptive effective LR (via the 2nd
-    #   moment estimate) that automatically normalises these magnitude differences,
-    #   allowing ALL loss branches to contribute useful gradients simultaneously.
-    #   Ref: Loshchilov & Hutter, "Decoupled Weight Decay Regularization" (2019).
-    #
-    # LAYER-WISE LR RATIONALE:
-    #   The backbone (ResNet-101) is already well-trained on ImageNet; fine-
-    #   tuning it too fast destroys useful low-level features.  The heads
-    #   (RPN, RoI, mask predictor) are randomly initialized and need a 10×
-    #   higher LR to converge quickly.
+
     backbone_params = [p for n, p in model.named_parameters()
                        if p.requires_grad and 'backbone' in n]
     head_params     = [p for n, p in model.named_parameters()
@@ -909,19 +803,7 @@ def main():
         eps=1e-8,
     )
 
-    # ── [FIX 3]  OneCycleLR: warmup → peak → cosine anneal ───────────────
-    #
-    # WHY OneCycleLR:
-    #   Smith & Touvron's "super-convergence" shows that a single large-LR
-    #   peak followed by steep decay often reaches better minima than a
-    #   monotonic schedule.  The 15% warmup stabilises the Focal/Dice gradient
-    #   flow before the LR peaks, preventing the early instability that
-    #   plagued your SGD run.
-    #   Ref: Smith & Touvron (2018, 2019).
-    #
-    # STEP ALIGNMENT:
-    #   OneCycleLR MUST step once per *optimizer update*, NOT once per epoch.
-    #   Total optimizer updates = epochs × (batches_per_epoch / accum_steps).
+
     steps_per_epoch   = math.ceil(len(train_loader) / ACCUMULATION_STEPS)
     total_optim_steps = NUM_EPOCHS * steps_per_epoch
 
@@ -944,10 +826,10 @@ def main():
         f"total_steps={total_optim_steps}  warmup={int(0.15*total_optim_steps)} steps"
     )
 
-    # model = train_model(
-    #     model, train_loader, optimizer, lr_scheduler,
-    #     NUM_EPOCHS, is_onecycle=USE_ONECYCLE,
-    # )
+    model = train_model(
+        model, train_loader, optimizer, lr_scheduler,
+        NUM_EPOCHS, is_onecycle=USE_ONECYCLE,
+    )
 
     if os.path.exists(CHECKPOINT_PATH):
         model.load_state_dict(torch.load(CHECKPOINT_PATH, map_location=DEVICE))
