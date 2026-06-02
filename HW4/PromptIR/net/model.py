@@ -18,6 +18,20 @@ import time
 ##########################################################################
 ## Layer Norm
 
+'''
+rearrange from einops:
+
+rearrnage(input, pattern, **axe_lengths)->transform_inputs
+輸入 input ; 用字串 pattern 更改其維度;
+使用 axe_lengths 幫新定義的維度選擇長度設定;
+輸出 
+e.g: 
+return rearrange(x, 'b (h w) c -> b c h w',h=h,w=w)
+輸入 x, 將 b (h,w) c 排列(1 * (1,1) * 1)變 b,c,h,w (1 * 1 * 1 *)
+'''
+
+
+
 def to_3d(x):
     return rearrange(x, 'b c h w -> b (h w) c')
 

@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from pytorch_msssim import ssim
-
+from utils.dataset_utils import HW4HighD4Dataset
 from utils.dataset_utils import PromptTrainDataset
 from utils.dataset_utils import HW4TrainDataset # <--- 修改這裡
 from net.model import PromptIR
@@ -66,13 +66,12 @@ class FFTCharbonnierLoss(nn.Module):
         # 聯合權重
         return loss_spatial + (self.fft_weight * loss_fft)
 
-# 在 PromptIRModel 中替換：
-# self.loss_fn = FFTCharbonnierLoss()  
+
 class PromptIRModel(pl.LightningModule):
     def __init__(self):
         super().__init__()
         self.net = PromptIR(decoder=True)
-        self.loss_fn = FFTCharbonnierLoss()
+        self.loss_fn = CharbonnierLoss()
     
     def forward(self,x):
         return self.net(x)
@@ -93,8 +92,8 @@ class PromptIRModel(pl.LightningModule):
         lr = scheduler.get_lr()
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-5)
-        scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=2,max_epochs=10)
+        optimizer = optim.AdamW(self.parameters(), lr=2e-4)
+        scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=10,max_epochs=100)
 
         return [optimizer],[scheduler]
 
@@ -129,7 +128,7 @@ def main():
     # model = PromptIRModel()
     model = PromptIRModel.load_from_checkpoint(best_250_ckpt)
     trainer = pl.Trainer( max_epochs=opt.epochs,accelerator="gpu",devices=1,strategy="auto",
-                         precision="16-mixed",accumulate_grad_batches=4,
+                         precision="16-mixed",accumulate_grad_batches=4,gradient_clip_val=1.0,
                          logger=logger,callbacks=[checkpoint_callback])
     trainer.fit(model=model, train_dataloaders=trainloader)
 

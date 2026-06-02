@@ -40,19 +40,10 @@ class HW4TrainDataset(Dataset):
         # 載入圖片
         deg_img = Image.open(os.path.join(self.degraded_dir, degraded_name)).convert('RGB')
         clean_img = Image.open(os.path.join(self.clean_dir, clean_name)).convert('RGB')
-        # if random.random() < 0.3:
-        #     # 隨機挑選另一張圖
-        #     mix_idx = random.randint(0, len(self.image_files) - 1)
-        #     mix_deg_name = self.image_files[mix_idx]
-        #     mix_parts = mix_deg_name.split('-')
-        #     mix_clean_name = f"{mix_parts[0]}_clean-{mix_parts[1]}"
-            
-        #     mix_deg = Image.open(os.path.join(self.degraded_dir, mix_deg_name)).convert('RGB')
-        #     mix_clean = Image.open(os.path.join(self.clean_dir, mix_clean_name)).convert('RGB')
-            
-        #     # 以 0.5 的透明度融合兩張圖片 (Image.blend)
-        #     deg_img = Image.blend(deg_img, mix_deg, alpha=0.5)
-        #     clean_img = Image.blend(clean_img, mix_clean, alpha=0.5)
+        if random.random() > 0.5:
+            k = random.randint(1, 3) # 隨機挑選 1~3，乘上 90 度
+            deg_img = TF.rotate(deg_img, k * 90)
+            clean_img = TF.rotate(clean_img, k * 90)
 
         # 節省 VRAM：對兩張圖片套用完全相同參數的隨機裁切 (Random Crop)
         i, j, h, w = transforms.RandomCrop.get_params(deg_img, output_size=(self.patch_size, self.patch_size))
@@ -76,7 +67,61 @@ class HW4TrainDataset(Dataset):
 
         # 回傳 train.py 預期的格式: ([clean_name, task_id], degraded_tensor, clean_tensor)
         return ([clean_name, "hw4_mixed"], deg_tensor, clean_tensor)
-    
+
+class HW4HighD4Dataset(Dataset):
+    def __init__(self, opt):
+        super().__init__()
+        self.opt = opt
+        # 定義路徑
+        self.train_dir = opt.train_dir 
+        self.degraded_dir = os.path.join(self.train_dir, 'degraded')
+        self.clean_dir = os.path.join(self.train_dir, 'clean')
+        
+        # 取得所有退化 (degraded) 圖片的檔名
+        self.image_files = [f for f in os.listdir(self.degraded_dir) if f.endswith(('.png', '.jpg'))]
+        self.patch_size = opt.patch_size 
+
+    def __len__(self):
+        return len(self.image_files) * 5
+
+    def __getitem__(self, idx):
+        real_idx = idx % len(self.image_files)
+        
+        degraded_name = self.image_files[real_idx]
+        parts = degraded_name.split('-')
+        clean_name = f"{parts[0]}_clean-{parts[1]}"
+        
+        # 載入圖片
+        deg_img = Image.open(os.path.join(self.degraded_dir, degraded_name)).convert('RGB')
+        clean_img = Image.open(os.path.join(self.clean_dir, clean_name)).convert('RGB')
+        if random.random() > 0.5:
+            k = random.randint(1, 3) # 隨機挑選 1~3，乘上 90 度
+            deg_img = TF.rotate(deg_img, k * 90)
+            clean_img = TF.rotate(clean_img, k * 90)
+
+        # 節省 VRAM：對兩張圖片套用完全相同參數的隨機裁切 (Random Crop)
+        i, j, h, w = transforms.RandomCrop.get_params(deg_img, output_size=(self.patch_size, self.patch_size))
+        deg_img = TF.crop(deg_img, i, j, h, w)
+        clean_img = TF.crop(clean_img, i, j, h, w)
+
+        # ====== 新增：同步資料擴增 ======
+        # 50% 機率水平翻轉
+        if random.random() > 0.5:
+            deg_img = TF.hflip(deg_img)
+            clean_img = TF.hflip(clean_img)
+            
+        # 50% 機率垂直翻轉
+        if random.random() > 0.5:
+            deg_img = TF.vflip(deg_img)
+            clean_img = TF.vflip(clean_img)
+
+        # 轉換為 Tensor
+        deg_tensor = TF.to_tensor(deg_img)
+        clean_tensor = TF.to_tensor(clean_img)
+
+        # 回傳 train.py 預期的格式: ([clean_name, task_id], degraded_tensor, clean_tensor)
+        return ([clean_name, "hw4_mixed"], deg_tensor, clean_tensor)
+
 class PromptTrainDataset(Dataset):
     def __init__(self, args):
         super(PromptTrainDataset, self).__init__()
